@@ -1,4 +1,5 @@
 import 'package:http/http.dart' as http;
+import 'package:youtube_extractor/src/internal/parsers/muxed_stream_info_parser.dart';
 import 'src/internal/parsers/dash_manifest_parser.dart';
 import 'src/exceptions/parse_exception.dart';
 import 'src/exceptions/video_requires_purchase_exception.dart';
@@ -23,7 +24,7 @@ class YouTubeExtractor {
 
   // Client used for http requests
   var _client = http.Client();
-  
+
   // Credits from https://github.com/sarbagyastha/youtube_player_flutter
   // Get video ID from URL
   static String convertUrlToId(String url, [bool trimWhitespaces = true]) {
@@ -44,7 +45,6 @@ class YouTubeExtractor {
 
     return null;
   }
-
 
   /// Gets a set of all available media stream infos for given video.
   Future<MediaStreamInfoSet> getMediaStreamsAsync(String videoId) async {
@@ -76,37 +76,21 @@ class YouTubeExtractor {
 
     // Parse muxed stream infos
     var muxedStreamInfo = parser.getMuxedStreamInfo();
-    for (var i = 0; i < muxedStreamInfo.length; i++) {
-      // Extract itag
-      var itag = muxedStreamInfo[i].parseItag();
-
-      // Skip unknown itags
-      if (!ItagHelper.isKnown(itag)) {
-        continue;
+    await Future.forEach(muxedStreamInfo, (parser) async {
+      var streamInfo = await _parseMuxedStreamInfo(parser, playerContext);
+      if (streamInfo != null) {
+        muxedStreamInfoMap[streamInfo.iTag] = streamInfo;
       }
+    });
 
-      // Extract URL
-      var url = muxedStreamInfo[i].parseUrl();
-
-      // Decipher signature if needed
-      var signature = muxedStreamInfo[i].parseSignature();
-      if (signature != null) {
-        var playerSource =
-            await _getVideoPlayerSourceAsync(playerContext.sourceUrl);
-        signature = playerSource.decipher(signature);
-        url = url + '&signature=' + signature;
+    // Parse muxed stream infos from JSON
+    var muxedStreamInfoFromJson = parser.getMuxedStreamInfoFromJson();
+    await Future.forEach(muxedStreamInfoFromJson, (parser) async {
+      var streamInfo = await _parseMuxedStreamInfo(parser, playerContext);
+      if (streamInfo != null) {
+        muxedStreamInfoMap[streamInfo.iTag] = streamInfo;
       }
-
-      // Probe stream and get content length
-      var probe = await _client.head(url);
-      int contentLength = int.tryParse(probe.headers['content-length']);
-
-      // If probe failed or content length is 0, it means the stream is gone or faulty
-      if (contentLength > 0) {
-        var streamInfo = MuxedStreamInfo(itag, url, contentLength);
-        muxedStreamInfoMap[itag] = streamInfo;
-      }
-    }
+    });
 
     // Parse adaptive stream infos
     var adaptiveStreamInfo = parser.getAdaptiveStreamInfo();
@@ -334,6 +318,40 @@ class YouTubeExtractor {
     var operations = parser.parseCipherOperations();
 
     return _playerSourceCache[sourceUrl] = PlayerSource(operations);
+  }
+
+  Future<MuxedStreamInfo> _parseMuxedStreamInfo(
+      MuxedStreamInfoParser parser, PlayerContext playerContext) async {
+    // Extract itag
+    var itag = parser.parseItag();
+
+    // Skip unknown itags
+    if (!ItagHelper.isKnown(itag)) {
+      return null;
+    }
+
+    // Extract URL
+    var url = parser.parseUrl();
+
+    // Decipher signature if needed
+    var signature = parser.parseSignature();
+    if (signature != null) {
+      var playerSource =
+          await _getVideoPlayerSourceAsync(playerContext.sourceUrl);
+      signature = playerSource.decipher(signature);
+      url = url + '&signature=' + signature;
+    }
+
+    // Probe stream and get content length
+    var probe = await _client.head(url);
+    int contentLength = int.tryParse(probe.headers['content-length']);
+
+    // If probe failed or content length is 0, it means the stream is gone or faulty
+    if (contentLength > 0) {
+      return MuxedStreamInfo(itag, url, contentLength);
+    }
+
+    return null;
   }
 
   /// Verifies that the given string is syntactically a valid YouTube video ID.

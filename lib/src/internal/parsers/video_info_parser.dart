@@ -5,8 +5,11 @@ import 'dart:convert';
 class VideoInfoParser {
   Map<String, String> _root;
   bool isLive;
+  dynamic _playerResponseJson;
 
-  VideoInfoParser(this._root);
+  VideoInfoParser(this._root) {
+    _playerResponseJson = jsonDecode(_root['player_response']);
+  }
 
   String parseStatus() => _root['status'];
 
@@ -20,10 +23,10 @@ class VideoInfoParser {
   String parsePreviewVideoId() => _root['ypc_vid'];
 
   String parseDashManifestUrl() =>
-      jsonDecode(_root['player_response'])['streamingData']['dashManifestUrl'];
+      _playerResponseJson['streamingData']['dashManifestUrl'];
 
   String parseHlsPlaylistUrl() =>
-      jsonDecode(_root['player_response'])['streamingData']['hlsManifestUrl'];
+      _playerResponseJson['streamingData']['hlsManifestUrl'];
 
   List<MuxedStreamInfoParser> getMuxedStreamInfo() {
     var streamInfosEncoded = _root['url_encoded_fmt_stream_map'];
@@ -58,6 +61,34 @@ class VideoInfoParser {
     var streams = streamInfosEncoded.split(',');
     streams.forEach((stream) {
       builtList.add(AdaptiveStreamInfoParser(Uri.splitQueryString(stream)));
+    });
+
+    return builtList;
+  }
+
+  List<MuxedStreamInfoParser> getMuxedStreamInfoFromJson() {
+    List<dynamic> formats = _playerResponseJson['streamingData']['formats'];
+
+    // List that we will full
+    var builtList = List<MuxedStreamInfoParser>();
+
+    if (formats == null || formats.length == 0) {
+      return builtList;
+    }
+
+    formats.forEach((format) {
+      Map<String, String> parserParams = Map<String, String>();
+      parserParams['itag'] = format['itag']?.toString();
+      parserParams['url'] = format['url'];
+
+      if (parserParams['url'] == null || parserParams['url'].isEmpty) {
+        String cipher = format['cipher'];
+        Map<String, String> cipherMap = Uri.splitQueryString(cipher);
+        parserParams['url'] = cipherMap['url'];
+        parserParams['s'] = cipherMap['s'];
+      }
+
+      builtList.add(MuxedStreamInfoParser(parserParams));
     });
 
     return builtList;
