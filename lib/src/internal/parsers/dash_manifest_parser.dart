@@ -15,7 +15,18 @@ class DashManifestParser {
     var builtList = List<StreamInfoParser>();
 
     streamInfosXml.forEach((x) {
-      builtList.add(StreamInfoParser(x));
+      String sourceUrl = x.descendants
+          .firstWhere(
+              (x) => x is xml.XmlElement && x.name.local == 'Initialization',
+              orElse: () => null)
+          ?.attributes
+          ?.firstWhere((a) => a.name.local == 'sourceURL', orElse: () => null)
+          ?.value;
+
+      // skip partial streams
+      if (sourceUrl == null || !sourceUrl.contains(r'sq/')) {
+        builtList.add(StreamInfoParser(x));
+      }
     });
 
     return builtList;
